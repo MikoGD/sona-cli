@@ -1,0 +1,8 @@
+github.com/go-flac/flacvorbis/v2 v2.0.2 h1:xCL3OhxrxWkHrbWUBvGNe+6FQ03yLmBbz0v5z4V2PoQ=
+github.com/go-flac/flacvorbis/v2 v2.0.2/go.mod h1:SwTB5gs13VaM/N7rstwPoUsPibiMKklgwybYP9dYo2g=
+github.com/go-flac/go-flac/v2 v2.0.3 h1:gsodppSC2ThQzzdQMfnJQ8EN5TAtQDD9hx31BkNK2tU=
+github.com/go-flac/go-flac/v2 v2.0.3/go.mod h1:hvgeR2hElLbwk0Q1/vMazIDmIc2LAFSd9Bx/Fk6ViKo=
+go.uploadedlobster.com/discid v0.8.1 h1:7OFrnqHqk4M6JNbDtHANhMzDZdWECjwI2DxQCkY6sKs=
+go.uploadedlobster.com/discid v0.8.1/go.mod h1:36V25FdinU8imWRGebRAgwxv1ywWXkZss/LXYODXuzY=
+go.uploadedlobster.com/mbtypes v0.3.0 h1:DgfTrKLgafyYhW5Rtq4lGYewbv2BAT7FZkVbnumhbD0=
+go.uploadedlobster.com/mbtypes v0.3.0/go.mod h1:/ZpwXc8oRpDa7EWeGI9xEY+nGhMIVHhTruikZWD4Krg=
