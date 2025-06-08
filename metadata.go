@@ -119,11 +119,14 @@ type MetaData struct {
 }
 
 func GetMetaDataForCD() (*MetaData, error) {
-	disc, err := discid.Read("/dev/disk5")
+	disc, err := discid.Read("/dev/disk8")
 	if err != nil {
 		errorMessage := fmt.Sprintf("Failed to read disc ID: %s\n", err)
 		return nil, errors.New(errorMessage)
 	}
+
+  log.Printf("Disc ID: %s\n", disc.ID())
+
 	defer disc.Close()
 
 	URLString := fmt.Sprintf("%s/discid/%s", API_URL, disc.ID())
@@ -136,8 +139,10 @@ func GetMetaDataForCD() (*MetaData, error) {
 	queries := URL.Query()
 	queries.Set("inc", "artists+recordings")
 	toc := strings.ReplaceAll(disc.TOCString(), " ", "+")
+  log.Printf("Disc TOC: %s \n", toc)
 	queries.Set("toc", toc)
 	URL.RawQuery = queries.Encode()
+  log.Printf("Creating request for URL: %s\n", URL.String())
 	req, err := http.NewRequest("GET", URL.String(), nil)
 	if err != nil {
 		errorMessage := fmt.Sprintf("Error creating request: %s\n", err)
@@ -165,6 +170,8 @@ func GetMetaDataForCD() (*MetaData, error) {
 		errorMessage := fmt.Sprintf("Error parsing xml: %s\n", err)
 		return nil, errors.New(errorMessage)
 	}
+
+  log.Printf("metadata %v\n", metadata)
 
 	log.Printf("Album name: %s\n", metadata.Disc.Releases.Release[0].Title)
 
@@ -308,7 +315,7 @@ func AddFLACTags(songs map[string]FlacTags) error {
       flacFile.Meta = append(flacFile.Meta, &commentsMeta)
     }
 
-    flacFileWithTagsName := fmt.Sprintf("%s.flac", tags.Title)
+    flacFileWithTagsName := fmt.Sprintf("%d. %s.flac", tags.TrackNumber, tags.Title)
     if err := flacFile.Save(flacFileWithTagsName); err != nil {
       return err
     }

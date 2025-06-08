@@ -38,17 +38,17 @@ func start() uint8 {
 
 	defer changeDirectory(startingWorkingDirectory)
 
+	metadata, err := GetMetaDataForCD()
+  if err != nil {
+    log.Printf("Failed to get meta data: %v\n", err)
+    changeDirectory(startingWorkingDirectory)
+    return 1
+  }
+
 	if err := RipCD(tempDirPath); err != nil {
 		log.Printf("Failed to rip CD: %s\n", err)
 		changeDirectory(startingWorkingDirectory)
 		os.Exit(1)
-	}
-
-	metadata, err := GetMetaDataForCD()
-	if err != nil {
-		log.Printf("Failed to get meta data from CD: %s\n", err)
-		changeDirectory(startingWorkingDirectory)
-		return 1
 	}
 
 	songs := GetFlacTags(metadata)
@@ -75,8 +75,8 @@ func start() uint8 {
 		changeDirectory(startingWorkingDirectory)
 		return 1
 	}
-	for song := range songs {
-		fileName := fmt.Sprintf("%s.flac", song)
+	for song, tags := range songs {
+		fileName := fmt.Sprintf("%d. %s.flac", tags.TrackNumber, song)
 		oldPath := path.Join(tempDirPath, fileName)
 		newPath := path.Join(pathToAlbum, fileName)
 
