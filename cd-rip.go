@@ -18,7 +18,7 @@ func convertToFlac(fileName string) error {
   }
 
   newFileName := fmt.Sprintf("%s.flac", fileNameTokens[0])
-  cmd := exec.Command("ffmpeg", "-i", fileName, "-c:a", "flac", "-compression_level", "12", newFileName)
+  cmd := exec.Command("ffmpeg", "-i", fileName, "-c:a", "flac", "-compression_level", "5", newFileName)
   cmd.Stdout = os.Stdout
   cmd.Stderr = os.Stderr
 
@@ -32,7 +32,12 @@ func convertToFlac(fileName string) error {
 }
 
 func RipCD(destPath string) error {
-  cmd := exec.Command("cdparanoia", "-Bw")
+	CDROM, err := getCDDriveDeviceName()
+	if err != nil {
+		return err
+	}
+
+  cmd := exec.Command("cdparanoia", "-d", CDROM, "-Bw")
   cmd.Stdout = os.Stdout
   cmd.Stderr = os.Stderr
 
