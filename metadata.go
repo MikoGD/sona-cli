@@ -61,8 +61,9 @@ type Recording struct {
 
 type Track struct {
 	XMLName   xml.Name  `xml:"track"`
-	Number    uint8     `xml:"number"`
+	Number    string    `xml:"number"`
 	Length    uint32    `xml:"length"`
+	Title     string    `xml:"title"`
 	Recording Recording `xml:"recording"`
 }
 
@@ -88,6 +89,7 @@ type Medium struct {
 	TrackList TrackList `xml:"track-list"`
 	DiscList  DiscList  `xml:"disc-list"`
 	Position  uint8     `xml:"position"`
+	Format    string    `xml:"format"`
 }
 
 type MediumList struct {
@@ -106,6 +108,7 @@ type Release struct {
 type ReleaseList struct {
 	XMLName xml.Name  `xml:"release-list"`
 	Release []Release `xml:"release"`
+	Count   int       `xml:"count,attr"`
 }
 
 type MetaDisc struct {
@@ -114,18 +117,24 @@ type MetaDisc struct {
 }
 
 type MetaData struct {
-	XMLName xml.Name `xml:"metadata"`
-	Disc    MetaDisc `xml:"disc"`
+	XMLName  xml.Name     `xml:"metadata"`
+	Disc     *MetaDisc    `xml:"disc"`
+	Releases *ReleaseList `xml:"release-list"`
 }
 
 func GetMetaDataForCD() (*MetaData, error) {
-	disc, err := discid.Read("/dev/disk8")
+	CDDriveName, err := getCDDriveDeviceName()
+	if err != nil {
+		return nil, err
+	}
+
+	disc, err := discid.Read(CDDriveName)
 	if err != nil {
 		errorMessage := fmt.Sprintf("Failed to read disc ID: %s\n", err)
 		return nil, errors.New(errorMessage)
 	}
 
-  log.Printf("Disc ID: %s\n", disc.ID())
+	log.Printf("Disc ID: %s\n", disc.ID())
 
 	defer disc.Close()
 
@@ -139,10 +148,10 @@ func GetMetaDataForCD() (*MetaData, error) {
 	queries := URL.Query()
 	queries.Set("inc", "artists+recordings")
 	toc := strings.ReplaceAll(disc.TOCString(), " ", "+")
-  log.Printf("Disc TOC: %s \n", toc)
+	log.Printf("Disc TOC: %s \n", toc)
 	queries.Set("toc", toc)
 	URL.RawQuery = queries.Encode()
-  log.Printf("Creating request for URL: %s\n", URL.String())
+	log.Printf("Creating request for URL: %s\n", URL.String())
 	req, err := http.NewRequest("GET", URL.String(), nil)
 	if err != nil {
 		errorMessage := fmt.Sprintf("Error creating request: %s\n", err)
@@ -171,11 +180,30 @@ func GetMetaDataForCD() (*MetaData, error) {
 		return nil, errors.New(errorMessage)
 	}
 
-  log.Printf("metadata %v\n", metadata)
-
-	log.Printf("Album name: %s\n", metadata.Disc.Releases.Release[0].Title)
+	log.Printf("metadata %v\n", metadata)
 
 	return &metadata, nil
+}
+
+func GetRelease(metadata *MetaData) Release {
+	var releases []Release
+
+	if metadata.Disc != nil {
+		releases = metadata.Disc.Releases.Release
+	} else if metadata.Releases != nil {
+		releases = metadata.Releases.Release
+	} else {
+		log.Fatalf("Incomplete metadata schema can't find releases: %v\n", metadata)
+	}
+
+	for _, release := range releases {
+		if release.MediumList.Medium[0].Format == "CD" {
+			return release
+		}
+	}
+
+	log.Fatalln("No CD release found")
+	return Release{}
 }
 
 type FlacTags struct {
@@ -194,14 +222,16 @@ type FlacTags struct {
 	ArtistType  string
 }
 
-func GetFlacTags(metadata *MetaData) map[string]FlacTags {
-	songs := make(map[string]FlacTags)
-	release := metadata.Disc.Releases.Release[0]
-	tracks := release.MediumList.Medium[0].TrackList.Track
+func GetFlacTags(metadata *MetaData, discNumber uint8) []FlacTags {
+	release := GetRelease(metadata)
+	medium := release.MediumList.Medium[discNumber-1]
+
+	tracks := medium.TrackList.Track
 	albumName := release.Title
-	trackTotal := release.MediumList.Medium[0].TrackList.Count
-	discNumber := release.MediumList.Medium[0].Position
-	discTotal := len(release.MediumList.Medium[0].DiscList.Disc)
+	trackTotal := medium.TrackList.Count
+	discTotal := len(medium.DiscList.Disc)
+
+	songs := make([]FlacTags, trackTotal)
 
 	albumArtist := make([]string, len(release.AristCredit.NameCredit))
 	for index, nameCredit := range release.AristCredit.NameCredit {
@@ -209,10 +239,14 @@ func GetFlacTags(metadata *MetaData) map[string]FlacTags {
 	}
 
 	artistType := release.AristCredit.NameCredit[0].Artist.Type
-
-	for _, track := range tracks {
+	for i, track := range tracks {
 		tags := FlacTags{}
-		tags.Title = track.Recording.Title
+
+		if track.Title != "" {
+			tags.Title = track.Title
+		} else {
+			tags.Title = track.Recording.Title
+		}
 
 		artists := make([]string, len(track.Recording.ArtistCredit.NameCredit))
 		for index, nameCredit := range track.Recording.ArtistCredit.NameCredit {
@@ -220,9 +254,14 @@ func GetFlacTags(metadata *MetaData) map[string]FlacTags {
 		}
 		tags.Artist = artists
 
+		trackNumber, err := strconv.Atoi(track.Number)
+		if err != nil {
+			log.Fatalf("Failed to parse track number: %v\n", track.Number)
+		}
+		tags.TrackNumber = uint8(trackNumber)
+
 		tags.Album = albumName
 		tags.AlbumArtist = albumArtist
-		tags.TrackNumber = track.Number
 		tags.TrackTotal = trackTotal
 		tags.DiscNumber = discNumber
 		tags.DiscTotal = uint8(discTotal)
@@ -241,7 +280,7 @@ func GetFlacTags(metadata *MetaData) map[string]FlacTags {
 
 		tags.ArtistType = artistType
 
-		songs[track.Recording.Title] = tags
+		songs[i] = tags
 	}
 
 	return songs
@@ -264,62 +303,83 @@ func ExtractFLACComment(flacFile *flac.File) (*flacvorbis.MetaDataBlockVorbisCom
 	return comments, commentsIndex, nil
 }
 
-func AddFLACTags(songs map[string]FlacTags) error {
-	for song, tags := range songs {
-    fileNameWithoutTags := fmt.Sprintf("%s-no-tags.flac", song)
-    flacFile, err := flac.ParseFile(fileNameWithoutTags)
-    if err != nil {
-      return err
-    }
-
-    comments, commentsIndex, err := ExtractFLACComment(flacFile)
-    if err != nil {
-      return err
-    }
-
-    if comments == nil && commentsIndex > 0 {
-      comments = flacvorbis.New()
-    }
-
-    comments.Add("TITLE", tags.Title)
-
-		for _, artist := range tags.Artist {
-			comments.Add("ARTIST", artist)
+func getMediumForDiscNumber(discNumber uint8, release Release) Medium {
+	for _, medium := range release.MediumList.Medium {
+		if medium.Format == "CD" && medium.Position == discNumber {
+			return medium
 		}
-    
-    comments.Add("ALBUM", tags.Album)
-
-    for _, albumArtist := range tags.AlbumArtist {
-      comments.Add("ALBUM_ARTIST", albumArtist)
-    }
-
-    comments.Add("TRACK_NUMBER", strconv.Itoa(int(tags.TrackNumber)))
-    comments.Add("TRACK_TOTAL", strconv.Itoa(int(tags.TrackTotal)))
-    comments.Add("DISC_NUMBER", strconv.Itoa(int(tags.DiscNumber)))
-    comments.Add("DISC_TOTAL", strconv.Itoa(int(tags.DiscTotal)))
-    comments.Add("RELEASE_DATE", tags.ReleaseDate)
-    comments.Add("LENGTH", strconv.Itoa(int(tags.Length)))
-
-    for _, genre := range tags.Genre {
-      comments.Add("GENRE", genre)
-    }
-
-    comments.Add("JOIN_PHRASE", tags.JoinPhrase)
-    comments.Add("ARTIST_TYPE", tags.ArtistType)
-
-    commentsMeta := comments.Marshal()
-
-    if commentsIndex > 0 {
-      flacFile.Meta[commentsIndex] = &commentsMeta
-    } else {
-      flacFile.Meta = append(flacFile.Meta, &commentsMeta)
-    }
-
-    flacFileWithTagsName := fmt.Sprintf("%d. %s.flac", tags.TrackNumber, tags.Title)
-    if err := flacFile.Save(flacFileWithTagsName); err != nil {
-      return err
-    }
 	}
 
-  return nil
+	log.Fatalf("Failed to find medium for disc number %d\n", discNumber)
+
+	return Medium{}
+}
+
+func AddFLACTags(songs []FlacTags, metadata *MetaData, discNumber uint8) error {
+	for _, song := range songs {
+		fileNameWithoutTags := fmt.Sprintf("%s-no-tags.flac", sanitizeSongName(song.Title))
+		flacFile, err := flac.ParseFile(fileNameWithoutTags)
+		if err != nil {
+			return err
+		}
+
+		comments, commentsIndex, err := ExtractFLACComment(flacFile)
+		if err != nil {
+			return err
+		}
+
+		if comments == nil && commentsIndex > 0 {
+			comments = flacvorbis.New()
+		}
+
+		comments.Add("TITLE", song.Title)
+
+		for _, artist := range song.Artist {
+			comments.Add("ARTIST", artist)
+		}
+
+		comments.Add("ALBUM", song.Album)
+
+		for _, albumArtist := range song.AlbumArtist {
+			comments.Add("ALBUMARTIST", albumArtist)
+		}
+
+		comments.Add("TRACKNUMBER", strconv.Itoa(int(song.TrackNumber)))
+		comments.Add("TRACKTOTAL", strconv.Itoa(int(song.TrackTotal)))
+		comments.Add("DISCNUMBER", strconv.Itoa(int(song.DiscNumber)))
+		comments.Add("DISCTOTAL", strconv.Itoa(int(song.DiscTotal)))
+		comments.Add("RELEASEDATE", song.ReleaseDate)
+		comments.Add("LENGTH", strconv.Itoa(int(song.Length)))
+
+		for _, genre := range song.Genre {
+			comments.Add("GENRE", genre)
+		}
+
+		comments.Add("JOINPHRASE", song.JoinPhrase)
+		comments.Add("ARTISTTYPE", song.ArtistType)
+
+		commentsMeta := comments.Marshal()
+
+		if commentsIndex > 0 {
+			flacFile.Meta[commentsIndex] = &commentsMeta
+		} else {
+			flacFile.Meta = append(flacFile.Meta, &commentsMeta)
+		}
+
+		release := GetRelease(metadata)
+		var currentTrackNumber uint8 = 0
+		for i := 1; i < int(discNumber); i++ {
+			medium := getMediumForDiscNumber(uint8(i+1), release)
+			currentTrackNumber += medium.TrackList.Count
+		}
+
+		flacFileWithTagsName := fmt.Sprintf("%02d. %s.flac",
+			currentTrackNumber+song.TrackNumber, sanitizeSongName(song.Title))
+
+		if err := flacFile.Save(flacFileWithTagsName); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
