@@ -80,7 +80,7 @@ func getCDDriveDeviceName() (string, error) {
 }
 
 func sanitizeSongName(songName string) string {
-		pattern := `[\/\\:*?"<>|&!;#~%^\[\]{}()$=@,` + "`" + `'\t\n\r]`
+		pattern := `[\/\\:*?"<>|&!;#~%^\[\]{}()$=@,.` + "`" + `'\t\n\r]`
 		re := regexp.MustCompile(pattern)
 		// Replace all matched characters with underscore
 		return re.ReplaceAllString(songName, "_")
