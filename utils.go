@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/mikogd/maokai"
 )
 
 // Calls udevadm info to get the name of the device
@@ -18,8 +20,16 @@ func getDevInfo(dev string) ([]byte, error) {
 	cmd := exec.Command("udevadm", "info", "--query=property", "--name="+dev)
 	out, err := cmd.Output()
 
+	var exitError *exec.ExitError
+	if errors.As(err, &exitError) {
+		errorMessage := fmt.Sprintf(
+			"Error running \"udevadm info --query=property --name=%s\" command:\n%v", dev, exitError.Stderr)
+		return []byte{}, errors.New(errorMessage)
+	}
+
 	if err != nil {
-		return []byte{}, err
+		errorMessage := fmt.Sprintf("Error running \"udevadm info --query=property --name=%s\" command:\n%v", dev, err)
+		return []byte{}, errors.New(errorMessage)
 	}
 
 	return out, nil
@@ -28,24 +38,21 @@ func getDevInfo(dev string) ([]byte, error) {
 func checkIsCDROM(dev string) (bool, error) {
 	out, err := getDevInfo(dev)
 	if err != nil {
-		return false, err
+		errorMessage := fmt.Sprintf("Error getting CD device\n%v", err)
+		return false, errors.New(errorMessage)
 	}
 
-  scanner := bufio.NewScanner(bytes.NewReader(out))
+	scanner := bufio.NewScanner(bytes.NewReader(out))
 	isCDROM := false
 	for scanner.Scan() {
 		line := scanner.Text()
 		if strings.Trim(line, " \t\r\n") == "ID_CDROM_BD=1" {
-      return false, nil
+			return false, nil
 		}
 
 		if strings.Trim(line, " \t\r\n") == "ID_CDROM=1" {
 			isCDROM = true
 		}
-
-		// if strings.HasPrefix(line, "ID_CDROM=") && strings.HasSuffix(line, "1") {
-		// 	isCDROM = true
-		// }
 	}
 
 	if isCDROM {
@@ -55,12 +62,13 @@ func checkIsCDROM(dev string) (bool, error) {
 	return false, nil
 }
 
-func getCDDriveDeviceName() (string, error) {
+func getCDDriveDeviceName(logger maokai.Logger) (string, error) {
+	logger.CreateLog("Getting all device names")
 	// Find all /dev/sr* devices
 	matches, err := filepath.Glob("/dev/sr*")
 	if err != nil {
-		fmt.Println("Error listing /dev/sr*:", err)
-		return "", err
+		errorMessage := fmt.Sprintf("Error listing /dev/sr*: %v", err)
+		return "", errors.New(errorMessage)
 	}
 
 	// Check which are actual CD/DVD drives
@@ -68,20 +76,26 @@ func getCDDriveDeviceName() (string, error) {
 		isCDROM, err := checkIsCDROM(dev)
 
 		if err != nil {
-			return "", err
+			errorMessage := fmt.Sprintf("Failed to find CD drive\n%v", err)
+			return "", errors.New(errorMessage)
 		}
 
 		if isCDROM {
+			logger.CreateLog(fmt.Sprintf("Found CD drive %s", dev))
 			return dev, nil
 		}
 	}
 
-	return "", errors.New("Failed to find CD Drive")
+	return "", errors.New("No devices attached were CD drives")
 }
 
-func sanitizeSongName(songName string) string {
-		pattern := `[\/\\:*?"<>|&!;#~%^\[\]{}()$=@,.` + "`" + `'\t\n\r]`
-		re := regexp.MustCompile(pattern)
-		// Replace all matched characters with underscore
-		return re.ReplaceAllString(songName, "_")
+func sanitizeSongName(logger maokai.Logger, songName string) string {
+	pattern := `[\/\\:*?"<>|&!;#~%^\[\]{}()$=@,.` + "`" + `'\t\n\r]`
+	re := regexp.MustCompile(pattern)
+	// Replace all matched characters with underscore
+	sanitizedSongName := re.ReplaceAllString(songName, "_")
+
+	logger.CreateLogf("Sanitized \"%s\" to \"%s\"", songName, sanitizedSongName)
+
+	return sanitizedSongName
 }

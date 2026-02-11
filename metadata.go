@@ -13,6 +13,7 @@ import (
 
 	"github.com/go-flac/flacvorbis/v2"
 	"github.com/go-flac/go-flac/v2"
+	"github.com/mikogd/maokai"
 	"go.uploadedlobster.com/discid"
 )
 
@@ -122,10 +123,11 @@ type MetaData struct {
 	Releases *ReleaseList `xml:"release-list"`
 }
 
-func GetMetaDataForCD() (*MetaData, error) {
-	CDDriveName, err := getCDDriveDeviceName()
+func GetMetaDataForCD(logger *maokai.FileLogger) (*MetaData, error) {
+	CDDriveName, err := getCDDriveDeviceName(logger)
 	if err != nil {
-		return nil, err
+		errorMessage := fmt.Sprintf("Failed to get CD Drive: %s", err)
+		return nil, errors.New(errorMessage)
 	}
 
 	disc, err := discid.Read(CDDriveName)
@@ -135,6 +137,7 @@ func GetMetaDataForCD() (*MetaData, error) {
 	}
 
 	log.Printf("Disc ID: %s\n", disc.ID())
+	logger.CreateLogf("Disc ID: %s", disc.ID)
 
 	defer disc.Close()
 
@@ -148,10 +151,10 @@ func GetMetaDataForCD() (*MetaData, error) {
 	queries := URL.Query()
 	queries.Set("inc", "artists+recordings")
 	toc := strings.ReplaceAll(disc.TOCString(), " ", "+")
-	log.Printf("Disc TOC: %s \n", toc)
+	logger.CreateLogf("Disc TOC: %s \n", toc)
 	queries.Set("toc", toc)
 	URL.RawQuery = queries.Encode()
-	log.Printf("Creating request for URL: %s\n", URL.String())
+	logger.CreateLogf("Creating request for URL: %s\n", URL.String())
 	req, err := http.NewRequest("GET", URL.String(), nil)
 	if err != nil {
 		errorMessage := fmt.Sprintf("Error creating request: %s\n", err)
@@ -166,6 +169,7 @@ func GetMetaDataForCD() (*MetaData, error) {
 		errorMessage := fmt.Sprintf("Error making request: %s", err)
 		return nil, errors.New(errorMessage)
 	}
+
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
@@ -180,12 +184,11 @@ func GetMetaDataForCD() (*MetaData, error) {
 		return nil, errors.New(errorMessage)
 	}
 
-	log.Printf("metadata %v\n", metadata)
-
 	return &metadata, nil
 }
 
-func GetRelease(metadata *MetaData) Release {
+func GetRelease(metadata *MetaData, logger *maokai.FileLogger) Release {
+	logger.CreateLog("Getting the release property")
 	var releases []Release
 
 	if metadata.Disc != nil {
@@ -193,7 +196,9 @@ func GetRelease(metadata *MetaData) Release {
 	} else if metadata.Releases != nil {
 		releases = metadata.Releases.Release
 	} else {
-		log.Fatalf("Incomplete metadata schema can't find releases: %v\n", metadata)
+		errorMessage := fmt.Sprintf("Incomplete metadata schema can't find releases: %v\n", metadata)
+		logger.CreateLog(errorMessage)
+		log.Fatalf(errorMessage)
 	}
 
 	for _, release := range releases {
@@ -202,7 +207,10 @@ func GetRelease(metadata *MetaData) Release {
 		}
 	}
 
-	log.Fatalln("No CD release found")
+	errorMessage := "No CD release found"
+	logger.CreateLog(errorMessage)
+	log.Fatalln(errorMessage)
+
 	return Release{}
 }
 
@@ -222,8 +230,8 @@ type FlacTags struct {
 	ArtistType  string
 }
 
-func GetFlacTags(metadata *MetaData, discNumber uint8) []FlacTags {
-	release := GetRelease(metadata)
+func GetFlacTags(metadata *MetaData, release Release, discNumber uint8, logger maokai.Logger) []FlacTags {
+	logger.CreateLog("Getting flac tags for songs")
 	medium := release.MediumList.Medium[discNumber-1]
 
 	tracks := medium.TrackList.Track
@@ -256,7 +264,9 @@ func GetFlacTags(metadata *MetaData, discNumber uint8) []FlacTags {
 
 		trackNumber, err := strconv.Atoi(track.Number)
 		if err != nil {
-			log.Fatalf("Failed to parse track number: %v\n", track.Number)
+			errorMessage := fmt.Sprintf("Failed to parse track number: %v\n", track.Number)
+			logger.CreateErrorLog(errorMessage)
+			log.Fatal(errorMessage)
 		}
 		tags.TrackNumber = uint8(trackNumber)
 
@@ -281,6 +291,7 @@ func GetFlacTags(metadata *MetaData, discNumber uint8) []FlacTags {
 		tags.ArtistType = artistType
 
 		songs[i] = tags
+		logger.CreateLogf("Flac tags for %s: %v", track.Title, track)
 	}
 
 	return songs
@@ -303,21 +314,23 @@ func ExtractFLACComment(flacFile *flac.File) (*flacvorbis.MetaDataBlockVorbisCom
 	return comments, commentsIndex, nil
 }
 
-func getMediumForDiscNumber(discNumber uint8, release Release) Medium {
+func getMediumForDiscNumber(discNumber uint8, release Release, logger maokai.Logger) Medium {
 	for _, medium := range release.MediumList.Medium {
 		if medium.Format == "CD" && medium.Position == discNumber {
 			return medium
 		}
 	}
 
-	log.Fatalf("Failed to find medium for disc number %d\n", discNumber)
+	errorMessage := fmt.Sprintf("Failed to find medium for disc number %d\n", discNumber)
+	logger.CreateErrorLog(errorMessage)
+	log.Fatalf(errorMessage)
 
 	return Medium{}
 }
 
-func AddFLACTags(songs []FlacTags, metadata *MetaData, discNumber uint8) error {
+func AddFLACTags(songs []FlacTags, metadata *MetaData, discNumber uint8, release Release, logger maokai.Logger) error {
 	for _, song := range songs {
-		fileNameWithoutTags := fmt.Sprintf("%s-no-tags.flac", sanitizeSongName(song.Title))
+		fileNameWithoutTags := fmt.Sprintf("%02d. %s-no-tags.flac", song.TrackNumber, sanitizeSongName(logger, song.Title))
 		flacFile, err := flac.ParseFile(fileNameWithoutTags)
 		if err != nil {
 			return err
@@ -366,16 +379,16 @@ func AddFLACTags(songs []FlacTags, metadata *MetaData, discNumber uint8) error {
 			flacFile.Meta = append(flacFile.Meta, &commentsMeta)
 		}
 
-		release := GetRelease(metadata)
 		var currentTrackNumber uint8 = 0
 		for i := 1; i < int(discNumber); i++ {
-			medium := getMediumForDiscNumber(uint8(i+1), release)
+			medium := getMediumForDiscNumber(uint8(i+1), release, logger)
 			currentTrackNumber += medium.TrackList.Count
 		}
 
 		flacFileWithTagsName := fmt.Sprintf("%02d. %s.flac",
-			currentTrackNumber+song.TrackNumber, sanitizeSongName(song.Title))
+			currentTrackNumber+song.TrackNumber, sanitizeSongName(logger, song.Title))
 
+		logger.CreateLog(fmt.Sprintf("Saving tags for %s", flacFileWithTagsName))
 		if err := flacFile.Save(flacFileWithTagsName); err != nil {
 			return err
 		}
