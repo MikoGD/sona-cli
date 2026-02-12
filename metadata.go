@@ -137,7 +137,7 @@ func GetMetaDataForCD(logger *maokai.FileLogger) (*MetaData, error) {
 	}
 
 	log.Printf("Disc ID: %s\n", disc.ID())
-	logger.CreateLogf("Disc ID: %s", disc.ID)
+	logger.CreateLogf("Disc ID: %s", disc.ID())
 
 	defer disc.Close()
 
